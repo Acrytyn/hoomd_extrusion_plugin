@@ -133,7 +133,7 @@ class EvaluatorPairConstantExtrusionForce
                                    Scalar4& _quat_j,
                                    Scalar _rcutsq,
                                    const param_type& _params)
-        : dr(_dr), rcutsq(_rcutsq), q_i(0), q_j(0), quat_i(_quat_i), quat_j(_quat_j),
+        : dr(_dr), rcutsq(_rcutsq), q_i(0), q_j(0), tag_i(0), tag_j(0), quat_i(_quat_i), quat_j(_quat_j),
           orientation_i {0, 0, 0}, orientation_j {0, 0, 0}, magForce(_params.magForce), placeHolder(_params.placeHolder)
         {
         }
@@ -147,7 +147,7 @@ class EvaluatorPairConstantExtrusionForce
     //! Whether the pair potential needs particle tags.
     HOSTDEVICE static bool needsTags()
         {
-        return false;
+        return true;
         }
 
     //! whether pair potential requires charges
@@ -176,7 +176,10 @@ class EvaluatorPairConstantExtrusionForce
     /*! \param tag_i Tag of particle i
         \param tag_j Tag of particle j
     */
-    HOSTDEVICE void setTags(unsigned int tagi, unsigned int tagj) { }
+    HOSTDEVICE void setTags(unsigned int tagi, unsigned int tagj) {
+        tag_i = tagi;
+        tag_j = tagj;
+     }
 
     //! Accept the optional charge values
     /*! \param qi Charge of particle i
@@ -188,6 +191,15 @@ class EvaluatorPairConstantExtrusionForce
         q_j = qj;
         }
 
+
+    // computes the square distances and checks whether is smaller to predefined value
+    HOSTDEVICE bool approximatly_equal(vec3<Scalar>  vec1,vec3<Scalar>  vec2 ){
+        Scalar diff = pow(vec1.x-vec2.x,2)+pow(vec1.y-vec2.y,2)+pow(vec1.z-vec2.z,2);
+        if (diff < 0.001) // 10^-6 since we compare 
+            return true;
+        else
+            return false;
+    }
     
     //! Evaluate the force and energy
     /*! \param force Output parameter to write the computed force.
@@ -211,36 +223,59 @@ class EvaluatorPairConstantExtrusionForce
         if (rsq > rcutsq)
             return false;
 
-        // convert dipole vector in the body frame of each particle to space
+        // rotate the initial orientation to the current normal
         // frame
         vec3<Scalar> direction_i = rotate(quat<Scalar>(quat_i), orientation_i);
         vec3<Scalar> direction_j = rotate(quat<Scalar>(quat_j), orientation_j);
+        vec3<Scalar> ring_direction(0.0,0.0,0.0);
+
 
         direction_i = normalize(direction_i);
-        //direction_j = normalize(direction_j);
-        // #ifndef __HIPCC__  // This ensures that this part only runs on the host
-        // std::cout << "direction_i: (" 
-        //         << direction_i.x << ", "
-        //         << direction_i.y << ", "
-        //         << direction_i.z << " , "
-        //         << magForce      << " , "
-        //         << rsq           << ")" << std::endl;
-        // #endif
+        direction_j = normalize(direction_j);
 
-        //  #ifndef __HIPCC__  // This ensures that this part only runs on the host
-        // std::cout << "quat_i: (" 
-        //         << quat_i.x << ", "
-        //         << quat_i.y << ", "
-        //         << quat_i.z << ", "
-        //         << quat_i.w << magForce << ")"<< std::endl;
-        // #endif
-        vec3<Scalar> f;
+        vec3<Scalar> f(0.0,0.0,0.0);
         vec3<Scalar> t_i;
         vec3<Scalar> t_j;
         Scalar e = Scalar(0.0);
 
-        f += magForce * direction_i;
 
+        //The problem here happens because of the random indexing of the ith and jth
+        //particles. When the ith particle is the monomer, we want give the negative of 
+        //normal force such that the symmetry of extrusion force is preserved. Here we are
+        // using tag because it's the simplest index available.
+        if (tag_i>tag_j)
+            ring_direction = direction_i;
+            f += magForce * ring_direction;
+        else
+            ring_direction = direction_j;
+            f -= magForce*ring_direction;
+        
+
+        // #ifndef __HIPCC__  // This ensures that this part only runs on the host
+        // std::cout << "direction_i: (" 
+        //         << ring_direction.x << ", "
+        //         << ring_direction.y << ", "
+        //         << ring_direction.z << " , "
+        //         << magForce      << " , " 
+        //         << rsq           << ")" << std::endl;
+        // #endif
+
+        // #ifndef __HIPCC__  // This ensures that this part only runs on the host
+        // std::cout << "quat_i: (" 
+        //         << tag_i<< ", "
+        //         << tag_j << ", "
+        //         << std::endl;
+        // #endif
+        
+        // f += magForce*ring_direction;
+        // #ifndef __HIPCC__  // This ensures that this part only runs on the host
+        // std::cout << "force_i: (" 
+        //         << f.x << ", "
+        //         << f.y << ", "
+        //         << f.z << " , "
+        //         << magForce      << " , "
+        //         << rsq           << ")" << std::endl;
+        // #endif
         t_i += vec3<double>(0, 0, 0);
         t_j += vec3<double>(0, 0, 0);
 
@@ -267,7 +302,7 @@ class EvaluatorPairConstantExtrusionForce
      */
     static std::string getName()
         {
-        return "dipole";
+        return "ConstantExtrusionForce";
         }
     static std::string getShapeParamName()
         {
@@ -283,6 +318,7 @@ class EvaluatorPairConstantExtrusionForce
     Scalar3 dr;             //!< Stored vector pointing between particle centers of mass
     Scalar rcutsq;          //!< Stored rcutsq from the constructor
     Scalar q_i, q_j;        //!< Stored particle charges
+    int tag_i, tag_j;       //!< Tags of the ring particle and the monomer
     Scalar4 quat_i, quat_j; //!< Stored quaternion of ith and jth particle from constructor
     vec3<Scalar> orientation_i;      /// Magnetic moment for ith particle
     vec3<Scalar> orientation_j;      /// Magnetic moment for jth particle
