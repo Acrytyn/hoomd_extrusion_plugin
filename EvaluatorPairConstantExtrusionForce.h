@@ -243,13 +243,14 @@ class EvaluatorPairConstantExtrusionForce
         //particles. When the ith particle is the monomer, we want give the negative of 
         //normal force such that the symmetry of extrusion force is preserved. Here we are
         // using tag because it's the simplest index available.
-        if (tag_i>tag_j)
+        if (tag_i>tag_j){
             ring_direction = direction_i;
             f += magForce * ring_direction;
-        else
+	}
+        else {
             ring_direction = direction_j;
             f -= magForce*ring_direction;
-        
+	}	    
 
         // #ifndef __HIPCC__  // This ensures that this part only runs on the host
         // std::cout << "direction_i: (" 
